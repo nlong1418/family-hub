@@ -3,12 +3,12 @@ import "./App.css";
 
 const API = process.env.REACT_APP_API_URL || "http://localhost:3001";
 
-const FAMILY_MEMBERS = ["Natalie", "Nels", "Me"];
+const FAMILY_MEMBERS = ["Natalie", "Nels", "Hub"];
 
 const COLORS = {
   Natalie: "#e8756a",
   Nels: "#5b8dd9",
-  Me: "#6cb87a",
+  Hub: "#6cb87a",
   default: "#9b8ec4",
 };
 
