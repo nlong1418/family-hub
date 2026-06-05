@@ -3,11 +3,11 @@ import "./App.css";
 
 const API = process.env.REACT_APP_API_URL || "http://localhost:3001";
 
-const FAMILY_MEMBERS = ["Mom", "Dad", "Me"];
+const FAMILY_MEMBERS = ["Natalie", "Nels", "Me"];
 
 const COLORS = {
-  Mom: "#e8756a",
-  Dad: "#5b8dd9",
+  Natalie: "#e8756a",
+  Nels: "#5b8dd9",
   Me: "#6cb87a",
   default: "#9b8ec4",
 };
@@ -37,58 +37,9 @@ function timeAgo(iso) {
 
 // ─── Calendar ────────────────────────────────────────────────────────────────
 
-function Calendar({ googleCalendarId }) {
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [events, setEvents] = useState([
-    { id: 1, title: "Soccer practice", date: "2026-06-04", color: "#5b8dd9", time: "4:00 PM" },
-    { id: 2, title: "Family dinner", date: "2026-06-07", color: "#6cb87a", time: "6:00 PM" },
-    { id: 3, title: "Dentist", date: "2026-06-11", color: "#e8756a", time: "10:30 AM" },
-  ]);
-  const [showAdd, setShowAdd] = useState(false);
-  const [newEvent, setNewEvent] = useState({ title: "", date: "", time: "", color: "#5b8dd9" });
+const GCAL_SRC = "https://calendar.google.com/calendar/embed?src=h7olgo6odieqv03edrk26hc2b4%40group.calendar.google.com&ctz=America%2FLos_Angeles";
 
-  const year = currentDate.getFullYear();
-  const month = currentDate.getMonth();
-
-  const firstDay = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const today = new Date();
-
-  const monthName = currentDate.toLocaleString("default", { month: "long" });
-
-  const cells = [];
-  for (let i = 0; i < firstDay; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-
-  const dateStr = (d) =>
-    `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-
-  const dayEvents = (d) => events.filter((e) => e.date === dateStr(d));
-
-  const todayEvents = events
-    .filter((e) => {
-      const ed = new Date(e.date);
-      return (
-        ed.getFullYear() === today.getFullYear() &&
-        ed.getMonth() === today.getMonth() &&
-        ed.getDate() === today.getDate()
-      );
-    })
-    .concat(
-      events.filter((e) => {
-        const ed = new Date(e.date);
-        return ed > today;
-      }).slice(0, 3)
-    )
-    .slice(0, 5);
-
-  function addEvent() {
-    if (!newEvent.title || !newEvent.date) return;
-    setEvents([...events, { ...newEvent, id: Date.now() }]);
-    setNewEvent({ title: "", date: "", time: "", color: "#5b8dd9" });
-    setShowAdd(false);
-  }
-
+function Calendar() {
   return (
     <div className="panel calendar-panel">
       <div className="panel-header">
@@ -96,107 +47,26 @@ function Calendar({ googleCalendarId }) {
           <span className="title-icon">📅</span>
           <span>Calendar</span>
         </div>
-        <div className="cal-nav">
-          <button
-            className="nav-btn"
-            onClick={() => setCurrentDate(new Date(year, month - 1, 1))}
-          >
-            ‹
-          </button>
-          <span className="month-label">
-            {monthName} {year}
-          </span>
-          <button
-            className="nav-btn"
-            onClick={() => setCurrentDate(new Date(year, month + 1, 1))}
-          >
-            ›
-          </button>
-        </div>
-        <button className="add-btn" onClick={() => setShowAdd(!showAdd)}>
-          + Add
-        </button>
-      </div>
-
-      {showAdd && (
-        <div className="add-form">
-          <input
-            placeholder="Event title"
-            value={newEvent.title}
-            onChange={(e) => setNewEvent({ ...newEvent, title: e.target.value })}
-          />
-          <input
-            type="date"
-            value={newEvent.date}
-            onChange={(e) => setNewEvent({ ...newEvent, date: e.target.value })}
-          />
-          <input
-            type="time"
-            value={newEvent.time}
-            onChange={(e) => setNewEvent({ ...newEvent, time: e.target.value })}
-          />
-          <select
-            value={newEvent.color}
-            onChange={(e) => setNewEvent({ ...newEvent, color: e.target.value })}
-          >
-            <option value="#5b8dd9">Blue — Dad</option>
-            <option value="#e8756a">Red — Mom</option>
-            <option value="#6cb87a">Green — Me</option>
-            <option value="#9b8ec4">Purple — Family</option>
-          </select>
-          <div className="form-actions">
-            <button className="save-btn" onClick={addEvent}>Save</button>
-            <button className="cancel-btn" onClick={() => setShowAdd(false)}>Cancel</button>
-          </div>
-        </div>
-      )}
-
-      <div className="cal-grid">
-        {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
-          <div key={d} className="cal-label">{d}</div>
-        ))}
-        {cells.map((d, i) => {
-          const isToday =
-            d &&
-            today.getDate() === d &&
-            today.getMonth() === month &&
-            today.getFullYear() === year;
-          const evs = d ? dayEvents(d) : [];
-          return (
-            <div key={i} className={`cal-cell ${isToday ? "today" : ""} ${!d ? "empty" : ""}`}>
-              {d && <span className="day-num">{d}</span>}
-              {evs.slice(0, 2).map((ev) => (
-                <span key={ev.id} className="ev-dot" style={{ background: ev.color }} />
-              ))}
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="upcoming">
-        <div className="upcoming-title">Upcoming</div>
-        {todayEvents.length === 0 && (
-          <div className="empty-state">No upcoming events</div>
-        )}
-        {todayEvents.map((ev) => (
-          <div key={ev.id} className="event-row">
-            <span className="ev-bar" style={{ background: ev.color }} />
-            <span className="ev-name">{ev.title}</span>
-            {ev.time && <span className="ev-time">{ev.time}</span>}
-          </div>
-        ))}
-      </div>
-
-      {googleCalendarId && (
         <a
-          className="gcal-link"
-          href={`https://calendar.google.com/calendar/r`}
+          className="gcal-link-btn"
+          href="https://calendar.google.com/calendar/r"
           target="_blank"
           rel="noreferrer"
         >
-          Open Google Calendar ↗
+          Open ↗
         </a>
-      )}
+      </div>
+      <div className="gcal-embed-wrapper">
+        <iframe
+          src={GCAL_SRC}
+          style={{ border: 0 }}
+          width="100%"
+          height="100%"
+          frameBorder="0"
+          scrolling="no"
+          title="Family Calendar"
+        />
+      </div>
     </div>
   );
 }
@@ -464,7 +334,7 @@ export default function App() {
 
       <main className={`main layout-${activeTab}`}>
         {(activeTab === "all" || activeTab === "calendar") && (
-          <Calendar googleCalendarId={process.env.REACT_APP_GOOGLE_CALENDAR_ID} />
+          <Calendar />
         )}
         {(activeTab === "all" || activeTab === "todos") && (
           <TodoList
