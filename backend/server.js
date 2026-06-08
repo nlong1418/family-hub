@@ -8,189 +8,237 @@ app.use(express.json());
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const GROUP_CHAT_ID = process.env.TELEGRAM_GROUP_CHAT_ID;
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const PORT = process.env.PORT || 3001;
 
-// In-memory store (persists while server runs; upgrade to a DB later if needed)
-const store = {
-  messages: [],
-  todos: [],
-  nextTodoId: 1,
+// ─── Supabase helpers ─────────────────────────────────────────────────────────
+
+const sbHeaders = {
+  "Content-Type": "application/json",
+  "apikey": SUPABASE_KEY,
+  "Authorization": `Bearer ${SUPABASE_KEY}`,
+  "Prefer": "return=representation",
 };
+
+async function sbGet(table, query = "") {
+  const res = await fetch(`${SUPABASE_URL}${table}${query}`, { headers: sbHeaders });
+  if (!res.ok) throw new Error(`Supabase GET ${table} failed: ${await res.text()}`);
+  return res.json();
+}
+
+async function sbPost(table, body) {
+  const res = await fetch(`${SUPABASE_URL}${table}`, {
+    method: "POST",
+    headers: sbHeaders,
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Supabase POST ${table} failed: ${await res.text()}`);
+  const data = await res.json();
+  return Array.isArray(data) ? data[0] : data;
+}
+
+async function sbPatch(table, query, body) {
+  const res = await fetch(`${SUPABASE_URL}${table}${query}`, {
+    method: "PATCH",
+    headers: sbHeaders,
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Supabase PATCH ${table} failed: ${await res.text()}`);
+  const data = await res.json();
+  return Array.isArray(data) ? data[0] : data;
+}
+
+async function sbDelete(table, query) {
+  const res = await fetch(`${SUPABASE_URL}${table}${query}`, {
+    method: "DELETE",
+    headers: { ...sbHeaders, "Prefer": "return=minimal" },
+  });
+  if (!res.ok) throw new Error(`Supabase DELETE ${table} failed: ${await res.text()}`);
+  return { ok: true };
+}
+
+async function formatTodoList() {
+  const todos = await sbGet("/todos", "?order=id.asc");
+  if (!todos.length) return "📋 No items on the list yet.";
+  return (
+    "📋 *To-do list:*\n" +
+    todos.map((t) => `${t.done ? "✅" : "⬜"} ${t.id}. ${t.text}`).join("\n")
+  );
+}
 
 // ─── Telegram Bot ─────────────────────────────────────────────────────────────
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-function formatTodoList() {
-  if (store.todos.length === 0) return "📋 No items on the list yet.";
-  return (
-    "📋 *To-do list:*\n" +
-    store.todos
-      .map((t) => `${t.done ? "✅" : "⬜"} ${t.id}. ${t.text}`)
-      .join("\n")
-  );
-}
-
-bot.on("message", (msg) => {
+bot.on("message", async (msg) => {
   if (String(msg.chat.id) !== String(GROUP_CHAT_ID)) return;
 
   const text = msg.text || "";
   const from = msg.from.first_name || "Someone";
 
-  // /add <item>
-  if (text.startsWith("/add ")) {
-    const itemText = text.slice(5).trim();
-    if (!itemText) return;
-    const todo = { id: store.nextTodoId++, text: itemText, done: false };
-    store.todos.push(todo);
-    bot.sendMessage(GROUP_CHAT_ID, `✅ Added: *${itemText}*`, {
-      parse_mode: "Markdown",
-    });
-    return;
-  }
-
-  // /done <id>
-  if (text.startsWith("/done ")) {
-    const id = parseInt(text.slice(6).trim());
-    const todo = store.todos.find((t) => t.id === id);
-    if (todo) {
-      todo.done = true;
-      bot.sendMessage(GROUP_CHAT_ID, `✅ Marked done: *${todo.text}*`, {
-        parse_mode: "Markdown",
-      });
-    } else {
-      bot.sendMessage(GROUP_CHAT_ID, `❌ No item with ID ${id}`);
+  try {
+    // /add <item>
+    if (text.startsWith("/add ")) {
+      const itemText = text.slice(5).trim();
+      if (!itemText) return;
+      await sbPost("/todos", { id: Date.now(), text: itemText, done: false });
+      bot.sendMessage(GROUP_CHAT_ID, `✅ Added: *${itemText}*`, { parse_mode: "Markdown" });
+      return;
     }
-    return;
-  }
 
-  // /remove <id>
-  if (text.startsWith("/remove ")) {
-    const id = parseInt(text.slice(8).trim());
-    const idx = store.todos.findIndex((t) => t.id === id);
-    if (idx !== -1) {
-      const removed = store.todos.splice(idx, 1)[0];
-      bot.sendMessage(GROUP_CHAT_ID, `🗑️ Removed: *${removed.text}*`, {
-        parse_mode: "Markdown",
-      });
-    } else {
-      bot.sendMessage(GROUP_CHAT_ID, `❌ No item with ID ${id}`);
+    // /done <id>
+    if (text.startsWith("/done ")) {
+      const id = parseInt(text.slice(6).trim());
+      const todos = await sbGet("/todos", `?id=eq.${id}`);
+      if (todos.length) {
+        await sbPatch("/todos", `?id=eq.${id}`, { done: true });
+        bot.sendMessage(GROUP_CHAT_ID, `✅ Marked done: *${todos[0].text}*`, { parse_mode: "Markdown" });
+      } else {
+        bot.sendMessage(GROUP_CHAT_ID, `❌ No item with ID ${id}`);
+      }
+      return;
     }
-    return;
-  }
 
-  // /list
-  if (text === "/list") {
-    bot.sendMessage(GROUP_CHAT_ID, formatTodoList(), {
-      parse_mode: "Markdown",
-    });
-    return;
-  }
+    // /remove <id>
+    if (text.startsWith("/remove ")) {
+      const id = parseInt(text.slice(8).trim());
+      const todos = await sbGet("/todos", `?id=eq.${id}`);
+      if (todos.length) {
+        await sbDelete("/todos", `?id=eq.${id}`);
+        bot.sendMessage(GROUP_CHAT_ID, `🗑️ Removed: *${todos[0].text}*`, { parse_mode: "Markdown" });
+      } else {
+        bot.sendMessage(GROUP_CHAT_ID, `❌ No item with ID ${id}`);
+      }
+      return;
+    }
 
-  // /clear — removes completed items
-  if (text === "/clear") {
-    const before = store.todos.length;
-    store.todos = store.todos.filter((t) => !t.done);
-    const removed = before - store.todos.length;
-    bot.sendMessage(
-      GROUP_CHAT_ID,
-      `🧹 Cleared ${removed} completed item${removed !== 1 ? "s" : ""}.`
-    );
-    return;
-  }
+    // /list
+    if (text === "/list") {
+      const list = await formatTodoList();
+      bot.sendMessage(GROUP_CHAT_ID, list, { parse_mode: "Markdown" });
+      return;
+    }
 
-  // /help
-  if (text === "/help") {
-    bot.sendMessage(
-      GROUP_CHAT_ID,
-      `*Family Hub commands:*\n` +
-        `/add <item> — add to to-do list\n` +
-        `/done <id> — mark item done\n` +
-        `/remove <id> — delete item\n` +
-        `/list — show all items\n` +
-        `/clear — remove completed items\n\n` +
-        `Any other message appears on the family board 📋`,
-      { parse_mode: "Markdown" }
-    );
-    return;
-  }
+    // /clear — removes completed items
+    if (text === "/clear") {
+      const before = await sbGet("/todos", "");
+      await sbDelete("/todos", "?done=eq.true");
+      const after = await sbGet("/todos", "");
+      const removed = before.length - after.length;
+      bot.sendMessage(GROUP_CHAT_ID, `🧹 Cleared ${removed} completed item${removed !== 1 ? "s" : ""}.`);
+      return;
+    }
 
-  // Regular message → add to message board
-  if (!text.startsWith("/")) {
-    const message = {
-      id: Date.now(),
-      author: from,
-      text,
-      timestamp: new Date().toISOString(),
-      source: "telegram",
-    };
-    store.messages.push(message);
-    // Keep last 100 messages
-    if (store.messages.length > 100) store.messages.shift();
+    // /help
+    if (text === "/help") {
+      bot.sendMessage(
+        GROUP_CHAT_ID,
+        `*Family Hub commands:*\n` +
+          `/add <item> — add to to-do list\n` +
+          `/done <id> — mark item done\n` +
+          `/remove <id> — delete item\n` +
+          `/list — show all items\n` +
+          `/clear — remove completed items\n\n` +
+          `Any other message appears on the family board 📋`,
+        { parse_mode: "Markdown" }
+      );
+      return;
+    }
+
+    // Regular message → save to message board
+    if (!text.startsWith("/")) {
+      await sbPost("/messages", {
+        id: Date.now(),
+        author: from,
+        text,
+        timestamp: new Date().toISOString(),
+        source: "telegram",
+      });
+    }
+  } catch (err) {
+    console.error("Bot error:", err.message);
   }
 });
 
 // ─── REST API ─────────────────────────────────────────────────────────────────
 
 // GET all data for the dashboard
-app.get("/api/data", (req, res) => {
-  res.json({
-    messages: store.messages.slice(-50),
-    todos: store.todos,
-  });
+app.get("/api/data", async (req, res) => {
+  try {
+    const [messages, todos] = await Promise.all([
+      sbGet("/messages", "?order=timestamp.asc&limit=50"),
+      sbGet("/todos", "?order=id.asc"),
+    ]);
+    res.json({ messages, todos });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: "Database error" });
+  }
 });
 
 // POST a message from the dashboard → Telegram group
-app.post("/api/messages", (req, res) => {
+app.post("/api/messages", async (req, res) => {
   const { author, text } = req.body;
   if (!text?.trim()) return res.status(400).json({ error: "No text" });
-
-  const message = {
-    id: Date.now(),
-    author: author || "Family Hub",
-    text: text.trim(),
-    timestamp: new Date().toISOString(),
-    source: "dashboard",
-  };
-  store.messages.push(message);
-  if (store.messages.length > 100) store.messages.shift();
-
-  // Mirror to Telegram
-  bot.sendMessage(
-    GROUP_CHAT_ID,
-    `💻 *${message.author}* (from dashboard):\n${message.text}`,
-    { parse_mode: "Markdown" }
-  );
-
-  res.json(message);
+  try {
+    const message = await sbPost("/messages", {
+      id: Date.now(),
+      author: author || "Family Hub",
+      text: text.trim(),
+      timestamp: new Date().toISOString(),
+      source: "dashboard",
+    });
+    bot.sendMessage(
+      GROUP_CHAT_ID,
+      `💻 *${message.author}* (from dashboard):\n${message.text}`,
+      { parse_mode: "Markdown" }
+    );
+    res.json(message);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: "Database error" });
+  }
 });
 
 // POST a to-do from the dashboard
-app.post("/api/todos", (req, res) => {
+app.post("/api/todos", async (req, res) => {
   const { text } = req.body;
   if (!text?.trim()) return res.status(400).json({ error: "No text" });
-  const todo = { id: store.nextTodoId++, text: text.trim(), done: false };
-  store.todos.push(todo);
-  bot.sendMessage(GROUP_CHAT_ID, `💻 Dashboard added: *${todo.text}*`, {
-    parse_mode: "Markdown",
-  });
-  res.json(todo);
+  try {
+    const todo = await sbPost("/todos", { id: Date.now(), text: text.trim(), done: false });
+    bot.sendMessage(GROUP_CHAT_ID, `💻 Dashboard added: *${todo.text}*`, { parse_mode: "Markdown" });
+    res.json(todo);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: "Database error" });
+  }
 });
 
 // PATCH toggle a to-do
-app.patch("/api/todos/:id", (req, res) => {
-  const todo = store.todos.find((t) => t.id === parseInt(req.params.id));
-  if (!todo) return res.status(404).json({ error: "Not found" });
-  todo.done = !todo.done;
-  res.json(todo);
+app.patch("/api/todos/:id", async (req, res) => {
+  const id = req.params.id;
+  try {
+    const todos = await sbGet("/todos", `?id=eq.${id}`);
+    if (!todos.length) return res.status(404).json({ error: "Not found" });
+    const updated = await sbPatch("/todos", `?id=eq.${id}`, { done: !todos[0].done });
+    res.json(updated);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: "Database error" });
+  }
 });
 
 // DELETE a to-do
-app.delete("/api/todos/:id", (req, res) => {
-  const idx = store.todos.findIndex((t) => t.id === parseInt(req.params.id));
-  if (idx === -1) return res.status(404).json({ error: "Not found" });
-  store.todos.splice(idx, 1);
-  res.json({ ok: true });
+app.delete("/api/todos/:id", async (req, res) => {
+  const id = req.params.id;
+  try {
+    await sbDelete("/todos", `?id=eq.${id}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: "Database error" });
+  }
 });
 
 // Health check
